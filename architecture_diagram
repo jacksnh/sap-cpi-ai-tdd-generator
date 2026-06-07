@@ -1,0 +1,17 @@
+digraph SAP_CPI_Architecture {
+	rankdir=LR
+	source [label=ERPS4 shape=box]
+	sender [label="Sender Adapter" shape=box]
+	cpi [label="SAP CPI / Integration Suite
+EAI_EXIM_AUTOMATION" shape=box]
+	mapping [label="Mapping / Transformation" shape=box]
+	receiver [label="Receiver Adapter" shape=box]
+	target [label=EXIM shape=box]
+	monitoring [label="Monitoring & Error Handling" shape=box]
+	source -> sender
+	sender -> cpi
+	cpi -> mapping
+	mapping -> receiver
+	receiver -> target
+	cpi -> monitoring
+}
