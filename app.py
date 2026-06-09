@@ -6,6 +6,7 @@ from docx.shared import Inches
 from io import BytesIO
 import zipfile
 import pandas as pd
+from datetime import date
 from PIL import Image, ImageDraw, ImageFont
 import os
 
@@ -37,7 +38,7 @@ st.write("Generate a TDD manually or by uploading an SAP CPI iFlow package and m
 generation_mode = st.radio(
     "Choose TDD generation option",
     [
-        "Manual Entry",
+        "Manual Entry - Fetch iFlow using CPI API",
         "Generate using iFlow Package",
         "Generate using iFlow Package + Mapping Sheet"
     ]
@@ -48,9 +49,6 @@ source_system = st.text_input("Source System")
 target_system = st.text_input("Target System")
 business_context = st.text_area("Business Context")
 business_process = st.text_area("Business Process")
-st.subheader("SAP CPI iFlow Selection")
-package_name = st.text_input("Package Name")
-iflow_name = st.text_input("iFlow Name")
 
 integration_type = st.selectbox(
     "Integration Type",
@@ -77,18 +75,24 @@ receiver_adapter = ""
 mapping_logic = ""
 error_handling = ""
 description = ""
+cpi_package_name = ""
+cpi_iflow_name = ""
 
-if generation_mode == "Manual Entry":
+if generation_mode == "Manual Entry - Fetch iFlow using CPI API":
     sender_adapter = st.text_input("Sender Adapter", placeholder="HTTPS, SFTP, SOAP, IDoc, etc.")
     receiver_adapter = st.text_input("Receiver Adapter", placeholder="OData, REST, SOAP, SFTP, etc.")
     mapping_logic = st.text_area("Mapping Logic")
     error_handling = st.text_area("Error Handling")
     description = st.text_area("Integration Flow Description")
+    st.subheader("Fetch iFlow from CPI API")
+    cpi_package_name = st.text_input("CPI Package Name")
+    cpi_iflow_name = st.text_input("CPI iFlow Name")
 
 iflow_file = None
 mapping_file = None
 iflow_summary = ""
 mapping_summary = ""
+palette_summary = ""
 
 if generation_mode in ["Generate using iFlow Package", "Generate using iFlow Package + Mapping Sheet"]:
     iflow_file = st.file_uploader("Upload SAP CPI iFlow Package ZIP", type=["zip"])
@@ -101,11 +105,11 @@ if generation_mode == "Generate using iFlow Package + Mapping Sheet":
 # Extract iFlow Package Details
 # -----------------------------
 
-def extract_iflow_details(uploaded_zip):
+def extract_iflow_details(zip_bytes):
     details = []
 
     try:
-        zip_bytes = BytesIO(uploaded_zip.read())
+        zip_bytes.seek(0)
 
         with zipfile.ZipFile(zip_bytes, "r") as zip_ref:
             file_names = zip_ref.namelist()
@@ -164,6 +168,74 @@ def extract_iflow_details(uploaded_zip):
         return f"Error reading iFlow package: {e}"
 
 
+def extract_iflow_palette_steps_from_zip(zip_bytes):
+    steps = []
+
+    try:
+        zip_bytes.seek(0)
+
+        with zipfile.ZipFile(zip_bytes, "r") as zip_ref:
+            file_names = zip_ref.namelist()
+
+            for name in file_names:
+                lower_name = name.lower()
+
+                if lower_name.endswith(".iflw") or lower_name.endswith(".xml"):
+                    content = zip_ref.read(name).decode("utf-8", errors="ignore")
+
+                    keywords = [
+                        "Content Modifier",
+                        "Message Mapping",
+                        "Groovy Script",
+                        "XSLT Mapping",
+                        "Request Reply",
+                        "Router",
+                        "Filter",
+                        "Splitter",
+                        "Gather",
+                        "Join",
+                        "Multicast",
+                        "Process Call",
+                        "Local Integration Process",
+                        "Exception Subprocess",
+                        "Start Event",
+                        "End Event",
+                        "Timer Start",
+                        "HTTPS",
+                        "HTTP",
+                        "SOAP",
+                        "OData",
+                        "SFTP",
+                        "Mail",
+                        "JMS",
+                        "IDoc",
+                        "XI"
+                    ]
+
+                    for keyword in keywords:
+                        keyword_position = content.lower().find(keyword.lower())
+
+                        if keyword_position != -1:
+                            start = max(0, keyword_position - 1000)
+                            end = min(len(content), keyword_position + 2000)
+                            snippet = content[start:end]
+
+                            steps.append(
+                                f"""
+Step / Palette Identified: {keyword}
+Source File: {name}
+Relevant iFlow XML Context:
+{snippet}
+"""
+                            )
+
+        if not steps:
+            return "No CPI palette steps could be identified from the iFlow package."
+
+        return "\n\n".join(steps)
+
+    except Exception as e:
+        return f"Error extracting iFlow palette steps: {e}"
 # -----------------------------
 # Extract Mapping Sheet
 # -----------------------------
@@ -628,28 +700,43 @@ if st.button("Generate TDD"):
         st.warning("Please enter Interface Name, Source System, and Target System.")
 
     else:
-        # Option 1: Download iFlow directly from SAP CPI using Package Name and iFlow Name
-        if package_name and iflow_name:
-            try:
-                with st.spinner("Connecting to SAP CPI and downloading iFlow..."):
-                    cpi_iflow_zip = download_iflow_from_cpi_by_names(package_name, iflow_name)
-                    iflow_summary = extract_iflow_details(cpi_iflow_zip)
+               # Read iFlow either from CPI API or uploaded ZIP
+        try:
+            if generation_mode == "Manual Entry - Fetch iFlow using CPI API":
+                if cpi_package_name and cpi_iflow_name:
+                    with st.spinner("Connecting to SAP CPI and downloading iFlow..."):
+                        cpi_iflow_zip = download_iflow_from_cpi_by_names(
+                            cpi_package_name,
+                            cpi_iflow_name
+                        )
 
-                st.success("iFlow downloaded successfully from SAP CPI.")
+                        cpi_iflow_zip.seek(0)
+                        iflow_summary = extract_iflow_details(cpi_iflow_zip)
+                        cpi_iflow_zip.seek(0)
+                        palette_summary = extract_iflow_palette_steps_from_zip(cpi_iflow_zip)
 
-            except Exception as e:
-                st.error(f"Could not download iFlow from SAP CPI: {e}")
-                st.stop()
+                    st.success("iFlow downloaded successfully from SAP CPI.")
 
-        # Option 2: If CPI details are not entered, use uploaded iFlow ZIP
-        elif iflow_file is not None:
-            with st.spinner("Reading uploaded iFlow package..."):
-                iflow_summary = extract_iflow_details(iflow_file)
+                else:
+                    st.warning("Please enter CPI Package Name and CPI iFlow Name.")
+                    st.stop()
+
+            elif iflow_file is not None:
+                with st.spinner("Reading uploaded iFlow package..."):
+                    iflow_file.seek(0)
+                    zip_bytes = BytesIO(iflow_file.read())
+                    iflow_summary = extract_iflow_details(iflow_file)
+                    zip_bytes.seek(0)
+                    palette_summary = extract_iflow_palette_steps_from_zip(zip_bytes)
+        except Exception as e:
+            st.error(f"Unable to process iFlow package: {e}")
+            st.stop()
 
         # Mapping sheet upload remains same
         if mapping_file is not None:
             with st.spinner("Reading mapping sheet..."):
                 mapping_df, mapping_summary = extract_mapping_sheet(mapping_file)
+        current_date = date.today().strftime("%d.%m.%Y")
 
         prompt = f"""
 You are an SAP CPI Integration Architect.
@@ -659,6 +746,7 @@ Generate a detailed Technical Design Document for the following SAP CPI interfac
 Interface Name: {interface_name}
 Source System: {source_system}
 Target System: {target_system}
+Document Date: {current_date}
 Business Context: {business_context}
 Business Process: {business_process}
 Integration Type: {integration_type}
@@ -678,6 +766,9 @@ Extracted iFlow Package Details:
 
 Mapping Sheet Details:
 {mapping_summary}
+
+Extracted CPI Palette / Step Details:
+{palette_summary}
 
 Create the document in the same style as a SAP CPI Technical Design Document / FORUM template.
 
@@ -734,6 +825,17 @@ For each section:
 - Use iFlow package and mapping sheet details where available.
 - Mention SAP CPI / SAP Integration Suite as the middleware.
 
+For each identified CPI palette step, explain:
+- Step name
+- Where it appears in the iFlow sequence
+- What input it receives from the previous step
+- What operation it performs in this specific interface
+- What output it passes to the next step
+- Which source/target fields, headers, properties, mappings, scripts, routes, or adapters it is related to
+- Why this step is needed in this specific iFlow
+- Do not write generic CPI purpose only
+- If exact behavior is not available from the iFlow XML, write "To be confirmed from iFlow configuration"
+
 Important rules:
 - Use the iFlow package details where available.
 - Use the mapping sheet details where available.
@@ -741,6 +843,9 @@ Important rules:
 - Do not invent missing information.
 - If any information is missing, mention "To be confirmed".
 - Do not include passwords, secrets, API keys, or credentials.
+- For Change History, use Document Date as the Date. Do not create random dates.
+- Use Version 1.0 and Author as "Integration Team" unless provided by user.
+- In Technical Architecture, explain each CPI palette step based on what it is doing in this specific uploaded iFlow. Do not provide generic SAP CPI component descriptions.
 """
 
         with st.spinner("Generating Technical Design Document..."):
