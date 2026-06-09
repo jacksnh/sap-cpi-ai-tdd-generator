@@ -1,4 +1,5 @@
-import openai
+from openai import OpenAI
+import requests
 import streamlit as st
 from docx import Document
 from docx.shared import Inches
@@ -8,12 +9,11 @@ import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 import os
 
-
 # -----------------------------
 # OpenRouter Client
 # -----------------------------
 
-client = openai.OpenAI(
+client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=st.secrets["OPENROUTER_API_KEY"]
 )
@@ -46,6 +46,31 @@ generation_mode = st.radio(
 interface_name = st.text_input("Interface Name")
 source_system = st.text_input("Source System")
 target_system = st.text_input("Target System")
+business_context = st.text_area("Business Context")
+business_process = st.text_area("Business Process")
+st.subheader("SAP CPI iFlow Selection")
+package_name = st.text_input("Package Name")
+iflow_name = st.text_input("iFlow Name")
+
+integration_type = st.selectbox(
+    "Integration Type",
+    ["A2A", "B2B", "To be confirmed"]
+)
+
+data_classification = st.selectbox(
+    "Data Security Classification",
+    ["Public", "Internal", "Confidential", "Strictly Confidential", "To be confirmed"]
+)
+
+business_critical = st.selectbox(
+    "Business Critical",
+    ["Yes", "No", "To be confirmed"]
+)
+
+data_transfer_time = st.selectbox(
+    "Data Transfer Time",
+    ["Synchronous", "<= 2 minutes", "<= 30 minutes", "> 30 minutes", "To be confirmed"]
+)
 
 sender_adapter = ""
 receiver_adapter = ""
@@ -170,66 +195,134 @@ def create_architecture_diagram(
     receiver_adapter
 ):
     width = 1500
-    height = 550
+    height = 850
 
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
 
     try:
-        font = ImageFont.truetype("arial.ttf", 22)
-        small_font = ImageFont.truetype("arial.ttf", 18)
-        title_font = ImageFont.truetype("arial.ttf", 32)
+        title_font = ImageFont.truetype("arial.ttf", 42)
+        box_font = ImageFont.truetype("arial.ttf", 22)
+        small_font = ImageFont.truetype("arial.ttf", 16)
+        summary_font = ImageFont.truetype("arial.ttf", 36)
+        note_font = ImageFont.truetype("arial.ttf", 15)
     except Exception:
-        font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
         title_font = ImageFont.load_default()
+        box_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
+        summary_font = ImageFont.load_default()
+        note_font = ImageFont.load_default()
 
-    draw.text((500, 30), "SAP CPI Architecture Diagram", fill="black", font=title_font)
+    title = f"{source_system or 'Source System'} Integration with {target_system or 'Target System'}"
+    draw.text((420, 50), title, fill="black", font=title_font)
 
-    boxes = [
-        ("Source System\n" + (source_system or "To be confirmed"), 50, 190, 190, 110),
-        ("Sender Adapter\n" + (sender_adapter or "To be confirmed"), 280, 190, 190, 110),
-        ("SAP CPI /\nIntegration Suite\n" + (interface_name or "Interface"), 530, 170, 230, 150),
-        ("Mapping /\nTransformation", 820, 190, 190, 110),
-        ("Receiver Adapter\n" + (receiver_adapter or "To be confirmed"), 1050, 190, 190, 110),
-        ("Target System\n" + (target_system or "To be confirmed"), 1280, 190, 190, 110),
-    ]
+    source_box = (170, 150, 370, 390)
+    middle_box = (650, 150, 850, 390)
+    target_box = (1130, 150, 1330, 390)
 
-    for text, x, y, box_width, box_height in boxes:
-        draw.rectangle((x, y, x + box_width, y + box_height), outline="black", width=3)
-        draw.multiline_text((x + 12, y + 25), text, fill="black", font=small_font, spacing=6)
+    source_color = "#B7E3F0"
+    middle_color = "#F6C399"
+    target_color = "#B7E3F0"
 
-    arrows = [
-        (240, 245, 280, 245),
-        (470, 245, 530, 245),
-        (760, 245, 820, 245),
-        (1010, 245, 1050, 245),
-        (1240, 245, 1280, 245),
-    ]
+    draw.rectangle(source_box, fill=source_color, outline="gray", width=2)
+    draw.rectangle(middle_box, fill=middle_color, outline="gray", width=2)
+    draw.rectangle(target_box, fill=target_color, outline="gray", width=2)
 
-    for x1, y1, x2, y2 in arrows:
-        draw.line((x1, y1, x2, y2), fill="black", width=3)
+    source_label = source_system or "Source System"
+    target_label = target_system or "Target System"
+    middleware_label = "SAP CPI /\nIntegration Suite"
+
+    draw.multiline_text((220, 245), source_label, fill="black", font=box_font, spacing=5, align="center")
+    draw.multiline_text((685, 235), middleware_label, fill="black", font=box_font, spacing=5, align="center")
+    draw.multiline_text((1185, 245), target_label, fill="black", font=box_font, spacing=5, align="center")
+
+    draw.text((235, 205), "SAP", fill="white", font=small_font)
+    draw.rectangle((220, 190, 300, 230), fill="#2E9AFE")
+    draw.text((235, 202), "SAP", fill="white", font=small_font)
+
+    draw.ellipse((720, 190, 780, 250), fill="#2E86DE")
+    draw.text((708, 255), "CPI", fill="black", font=small_font)
+
+    draw.rectangle((1210, 195, 1260, 235), fill="white")
+    draw.ellipse((1220, 200, 1250, 210), fill="gray")
+    draw.rectangle((1220, 205, 1250, 225), fill="gray")
+    draw.ellipse((1220, 220, 1250, 230), fill="gray")
+
+    def arrow_with_label(start, end, label):
+     x1, y1 = start
+     x2, y2 = end
+
+     draw.line((x1, y1, x2, y2), fill="black", width=3)
+
+     if x2 > x1:
         draw.polygon(
-            [(x2, y2), (x2 - 12, y2 - 8), (x2 - 12, y2 + 8)],
+            [(x2, y2), (x2 - 12, y2 - 7), (x2 - 12, y2 + 7)],
+            fill="black"
+        )
+     else:
+        draw.polygon(
+            [(x2, y2), (x2 + 12, y2 - 7), (x2 + 12, y2 + 7)],
             fill="black"
         )
 
-    # Monitoring box
-    draw.rectangle((580, 390, 950, 470), outline="black", width=3)
-    draw.multiline_text(
-        (610, 415),
-        "Monitoring, Logging\nand Error Handling",
-        fill="black",
-        font=small_font,
-        spacing=6
+     mid_x = int((x1 + x2) / 2)
+     mid_y = int((y1 + y2) / 2)
+
+     text_box_width = 160
+     text_box_height = 22
+
+     draw.rectangle(
+        (
+            mid_x - text_box_width // 2,
+            mid_y - 28,
+            mid_x + text_box_width // 2,
+            mid_y - 6
+        ),
+        fill="white"
     )
 
-    # Arrow from CPI to monitoring
-    draw.line((650, 320, 700, 390), fill="black", width=3)
-    draw.polygon(
-        [(700, 390), (688, 382), (710, 378)],
-        fill="black"
+     draw.text(
+        (mid_x - 65, mid_y - 27),
+        label,
+        fill="black",
+        font=small_font
+     )
+
+    # Arrows between Source and CPI
+    arrow_with_label((370, 230), (650, 230), "Request / Send Data")
+    arrow_with_label((650, 275), (370, 275), "Response")
+
+# Arrows between CPI and Target
+    arrow_with_label((850, 230), (1130, 230), "Request / Send Data")
+    arrow_with_label((1130, 275), (850, 275), "Response")
+
+# Adapter labels
+    draw.text((455, 310), sender_adapter or "Sender Adapter", fill="black", font=small_font)
+    draw.text((925, 310), receiver_adapter or "Receiver Adapter", fill="black", font=small_font)
+
+    draw.rectangle((180, 470, 420, 480), fill="gray")
+    draw.text((170, 495), "Summary", fill="black", font=summary_font)
+
+    summary_text = (
+        f"1. {interface_name or 'This interface'} enables integration between "
+        f"{source_system or 'source system'} and {target_system or 'target system'} "
+        f"using SAP CPI / SAP Integration Suite."
     )
+
+    draw.text((170, 560), summary_text, fill="black", font=small_font)
+
+    note_box = (170, 650, 1330, 735)
+    draw.rectangle(note_box, fill="#C9C9C9", outline="#C9C9C9")
+
+    note_text = (
+        "Note:\n"
+        "1. Arrow direction represents which system initiates the call.\n"
+        "2. Black Arrow - Async push call.\n"
+        "3. Green Arrow - Sync call.\n"
+        "4. Red Arrow - Async pull call."
+    )
+
+    draw.multiline_text((180, 660), note_text, fill="black", font=note_font, spacing=4)
 
     diagram_file = "architecture_diagram.png"
     image.save(diagram_file)
@@ -266,8 +359,199 @@ def call_ai(prompt):
 
     except Exception as e:
         return f"Error calling OpenRouter: {e}"
+    
+
+def get_cpi_access_token():
+    response = requests.post(
+        st.secrets["CPI_TOKEN_URL"],
+        data={"grant_type": "client_credentials"},
+        auth=(st.secrets["CPI_CLIENT_ID"], st.secrets["CPI_CLIENT_SECRET"])
+    )
+
+    if response.status_code != 200:
+        raise Exception(f"Token request failed: {response.status_code} - {response.text}")
+
+    return response.json()["access_token"]
 
 
+def get_package_id_by_name(package_name, token):
+    url = f"{st.secrets['CPI_BASE_URL']}/api/v1/IntegrationPackages"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
+    }
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code != 200:
+        raise Exception(f"Package lookup failed: {response.status_code} - {response.text}")
+
+    packages = response.json().get("d", {}).get("results", [])
+
+    for package in packages:
+        if package.get("Name", "").strip().lower() == package_name.strip().lower():
+            return package.get("Id")
+
+    raise Exception(f"Package not found: {package_name}")
+
+
+def get_iflow_id_by_name(package_id, iflow_name, token):
+    url = (
+        f"{st.secrets['CPI_BASE_URL']}/api/v1/IntegrationPackages"
+        f"('{package_id}')/IntegrationDesigntimeArtifacts"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
+    }
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code != 200:
+        raise Exception(f"iFlow lookup failed: {response.status_code} - {response.text}")
+
+    artifacts = response.json().get("d", {}).get("results", [])
+
+    for artifact in artifacts:
+        if artifact.get("Name", "").strip().lower() == iflow_name.strip().lower():
+            return artifact.get("Id")
+
+    raise Exception(f"iFlow not found: {iflow_name}")
+
+
+def download_iflow_from_cpi_by_names(package_name, iflow_name):
+    token = get_cpi_access_token()
+
+    package_id = get_package_id_by_name(package_name, token)
+    artifact_id = get_iflow_id_by_name(package_id, iflow_name, token)
+
+    url = (
+        f"{st.secrets['CPI_BASE_URL']}/api/v1/IntegrationDesigntimeArtifacts"
+        f"(Id='{artifact_id}',Version='active')/$value"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/zip"
+    }
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code != 200:
+        raise Exception(f"iFlow download failed: {response.status_code} - {response.text}")
+
+    return BytesIO(response.content)
+
+# Converts AI-generated Markdown text into proper Word formatting.
+# Handles headings (#, ##, ###), Markdown tables, bullet points, numbered lists,
+# and removes basic Markdown symbols like **bold** and `code`.
+
+def add_markdown_to_doc(doc, content):
+    lines = content.splitlines()
+    i = 0
+
+    while i < len(lines):
+        line = lines[i].strip()
+
+        if not line:
+            i += 1
+            continue
+
+        # Headings
+        if line.startswith("##### "):
+            doc.add_heading(line.replace("##### ", "").strip(), level=5)
+            i += 1
+            continue
+
+        if line.startswith("#### "):
+            doc.add_heading(line.replace("#### ", "").strip(), level=4)
+            i += 1
+            continue
+
+        if line.startswith("### "):
+            doc.add_heading(line.replace("### ", "").strip(), level=3)
+            i += 1
+            continue
+
+        if line.startswith("## "):
+            doc.add_heading(line.replace("## ", "").strip(), level=2)
+            i += 1
+            continue
+
+        if line.startswith("# "):
+            doc.add_heading(line.replace("# ", "").strip(), level=1)
+            i += 1
+            continue
+
+        # Markdown table
+        if "|" in line and i + 1 < len(lines) and "---" in lines[i + 1]:
+            table_lines = []
+
+            while i < len(lines) and "|" in lines[i]:
+                table_lines.append(lines[i].strip())
+                i += 1
+
+            # Remove separator line like |---|---|
+            table_lines = [
+                row for row in table_lines
+                if not all(cell.strip().replace("-", "") == "" for cell in row.strip("|").split("|"))
+            ]
+
+            if table_lines:
+                rows = []
+                for row in table_lines:
+                    cells = [cell.strip() for cell in row.strip("|").split("|")]
+                    rows.append(cells)
+
+                max_cols = max(len(row) for row in rows)
+
+                table = doc.add_table(rows=1, cols=max_cols)
+                table.style = "Table Grid"
+
+                # Header row
+                for col_index in range(max_cols):
+                    table.rows[0].cells[col_index].text = rows[0][col_index] if col_index < len(rows[0]) else ""
+
+                # Data rows
+                for row in rows[1:]:
+                    row_cells = table.add_row().cells
+                    for col_index in range(max_cols):
+                        row_cells[col_index].text = row[col_index] if col_index < len(row) else ""
+
+            continue
+
+        # Bullet points
+        if line.startswith("- "):
+            clean_bullet = (
+                line.replace("- ", "", 1)
+                    .replace("**", "")
+                    .replace("__", "")
+                    .replace("`", "")
+                    .replace("*", "")
+            )
+
+            doc.add_paragraph(clean_bullet, style="List Bullet")
+            i += 1
+            continue
+
+        # Numbered list
+        if len(line) > 2 and line[0].isdigit() and line[1] == ".":
+            doc.add_paragraph(line, style="List Number")
+            i += 1
+            continue
+
+        # Normal paragraph
+        clean_line = (
+    line.replace("**", "")
+        .replace("__", "")
+        .replace("`", "")
+        .replace("*", "")
+    )
+
+        doc.add_paragraph(clean_line)
+        i += 1
 # -----------------------------
 # Create Word Document
 # -----------------------------
@@ -276,7 +560,7 @@ def create_word_document(content, mapping_df=None):
     doc = Document()
 
     doc.add_heading("SAP CPI Technical Design Document", 0)
-
+    doc.add_paragraph("FORUM Template Style")
     doc.add_heading("1. Interface Details", level=1)
     doc.add_paragraph(f"Interface Name: {interface_name}")
     doc.add_paragraph(f"Source System: {source_system}")
@@ -300,8 +584,8 @@ def create_word_document(content, mapping_df=None):
 
     doc.add_page_break()
 
-    doc.add_heading("3. Generated Technical Design Document", level=1)
-    doc.add_paragraph(content)
+    doc.add_heading("Generated SAP CPI Technical Design Document", level=1)
+    add_markdown_to_doc(doc, content)
 
     if mapping_df is not None:
         doc.add_page_break()
@@ -344,10 +628,25 @@ if st.button("Generate TDD"):
         st.warning("Please enter Interface Name, Source System, and Target System.")
 
     else:
-        if iflow_file is not None:
-            with st.spinner("Reading iFlow package..."):
+        # Option 1: Download iFlow directly from SAP CPI using Package Name and iFlow Name
+        if package_name and iflow_name:
+            try:
+                with st.spinner("Connecting to SAP CPI and downloading iFlow..."):
+                    cpi_iflow_zip = download_iflow_from_cpi_by_names(package_name, iflow_name)
+                    iflow_summary = extract_iflow_details(cpi_iflow_zip)
+
+                st.success("iFlow downloaded successfully from SAP CPI.")
+
+            except Exception as e:
+                st.error(f"Could not download iFlow from SAP CPI: {e}")
+                st.stop()
+
+        # Option 2: If CPI details are not entered, use uploaded iFlow ZIP
+        elif iflow_file is not None:
+            with st.spinner("Reading uploaded iFlow package..."):
                 iflow_summary = extract_iflow_details(iflow_file)
 
+        # Mapping sheet upload remains same
         if mapping_file is not None:
             with st.spinner("Reading mapping sheet..."):
                 mapping_df, mapping_summary = extract_mapping_sheet(mapping_file)
@@ -360,6 +659,12 @@ Generate a detailed Technical Design Document for the following SAP CPI interfac
 Interface Name: {interface_name}
 Source System: {source_system}
 Target System: {target_system}
+Business Context: {business_context}
+Business Process: {business_process}
+Integration Type: {integration_type}
+Data Security Classification: {data_classification}
+Business Critical: {business_critical}
+Data Transfer Time: {data_transfer_time}
 
 Manual Details:
 Sender Adapter: {sender_adapter}
@@ -374,31 +679,60 @@ Extracted iFlow Package Details:
 Mapping Sheet Details:
 {mapping_summary}
 
-Create the document with these sections:
+Create the document in the same style as a SAP CPI Technical Design Document / FORUM template.
 
-1. Document Purpose
-2. Interface Overview
-3. Business Requirement Summary
-4. Architecture Diagram Description
-5. Source System Details
-6. Target System Details
-7. SAP CPI iFlow Design
-8. Sender Adapter Configuration
-9. Receiver Adapter Configuration
-10. Message Mapping and Transformation Logic
-11. Routing Logic
-12. Exception Handling
-13. Retry and Reprocessing Strategy
-14. Security and Authentication
-15. Monitoring and Logging
-16. Externalized Parameters
-17. Mapping Sheet Summary
-18. Assumptions
-19. Dependencies
-20. Testing Scope
-21. Test Scenarios
-22. Deployment Checklist
-23. Appendix Reference
+Use the following structure:
+
+1. Introduction
+1.1 Business Context
+1.2 Business Process
+1.3 Detailed Business Requirements
+
+2. Development and Configuration Guidelines
+
+3. Document Change Control / History
+3.1 Change History
+3.2 Sign Off
+3.3 Related Documents
+3.4 Issue Log
+
+4. Technical Approach
+4.1 Realization Approach
+4.1.1 Scope
+4.1.2 Out of Scope
+4.1.3 Constraint
+4.1.4 Risk
+
+4.2 Technical Architecture
+4.3 Technical Data Model and Structure
+4.3.1 Data Structure
+4.3.2 Technical Data Model
+4.3.3 Mapping
+4.3.4 Routing
+4.3.5 Hardware Requirements
+4.3.5.1 Used System
+
+5. Realization
+5.1 Realization Objects
+5.1.1 Realisation Detailed Object List including Sequence and Dependencies
+5.1.2 Traceability
+5.2 Screen Design
+5.3 Security Enablement
+5.4 Test Script
+
+6. Cutover Plan for Implementation
+
+7. Appendix
+7.1 Glossary
+7.2 Meeting Minutes
+
+For each section:
+- Write in a formal SAP technical design document style.
+- Use tables where appropriate.
+- If information is missing, write "To be confirmed".
+- Do not invent system names, URLs, credentials, certificates, ports, or personal data.
+- Use iFlow package and mapping sheet details where available.
+- Mention SAP CPI / SAP Integration Suite as the middleware.
 
 Important rules:
 - Use the iFlow package details where available.
